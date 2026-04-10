@@ -47,7 +47,7 @@ def ensure_defaults(config: dict, current_model: str) -> dict:
     agents = config.setdefault("agents", {})
     defaults = agents.setdefault("defaults", {})
     defaults.setdefault("workspace", "~/.picoclaw/workspace")
-    defaults.setdefault("max_tokens", 8192)
+    defaults.setdefault("max_tokens", 4096)
     defaults.setdefault("temperature", 0.2)
     defaults.setdefault("max_tool_iterations", 20)
     defaults["model_name"] = MODEL_ALIAS

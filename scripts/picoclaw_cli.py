@@ -20,6 +20,7 @@ import urllib.request
 from collections import deque
 from dataclasses import dataclass
 from http.cookiejar import CookieJar
+from pathlib import Path
 
 
 ROOT = "/Users/Tim/Documents/picoclaw"
@@ -32,14 +33,15 @@ DOCKER_ENV = {
     **({} if os.environ.get("DOCKER_HOST") else {"DOCKER_CONTEXT": "default"}),
 }
 POLL_SECONDS = 0.4
-MAX_SCROLLBACK = 2500
+MAX_SCROLLBACK = 400
 IGNORED_OUTPUT_LINES = {
-    "",
     "TZ environment: UTC",
     "ZONEINFO environment:",
     "Time zone loaded successfully: UTC",
     "Warning: deny patterns are disabled. All commands will be allowed.",
 }
+LMSTUDIO_MODELS_URL = "http://127.0.0.1:1234/api/v0/models"
+CONFIG_PATH = Path(ROOT) / "docker" / "data" / "config.json"
 
 
 def current_dashboard_token() -> str:
@@ -165,12 +167,23 @@ class PopupState:
     selected_action: int = 0
 
 
+@dataclass
+class ChatMessage:
+    role: str
+    author: str
+    lines: list[str]
+
+
 class PicoClawTUI:
     def __init__(self, stdscr) -> None:
         self.stdscr = stdscr
         self.client = LauncherClient()
         self.child_fd = spawn_agent()
-        self.output_lines: deque[str] = deque(maxlen=MAX_SCROLLBACK)
+        self.messages: deque[ChatMessage] = deque(maxlen=MAX_SCROLLBACK)
+        self.model_label = self.load_model_label()
+        self.current_agent_message: ChatMessage | None = None
+        self.current_banner_message: ChatMessage | None = None
+        self.pending_user_echoes: deque[str] = deque()
         self.partial_line = ""
         self.input_buffer = ""
         self.status = "Connected"
@@ -183,6 +196,28 @@ class PicoClawTUI:
         self.should_exit = False
         self.dirty = True
         self.init_screen()
+
+    def load_model_label(self) -> str:
+        try:
+            with urllib.request.urlopen(LMSTUDIO_MODELS_URL, timeout=3) as response:
+                payload = json.load(response)
+            loaded = [model for model in payload.get("data", []) if model.get("state") == "loaded"]
+            if loaded:
+                return str(loaded[0].get("id") or "assistant")
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            alias = config.get("agents", {}).get("defaults", {}).get("model_name")
+            for item in config.get("model_list", []):
+                if item.get("model_name") == alias:
+                    model = str(item.get("model") or "")
+                    if "/" in model:
+                        return model.split("/", 1)[1]
+        except Exception:  # noqa: BLE001
+            pass
+        return "assistant"
 
     def init_screen(self) -> None:
         try:
@@ -197,27 +232,49 @@ class PicoClawTUI:
         try:
             curses.start_color()
             curses.use_default_colors()
-            curses.init_pair(1, curses.COLOR_CYAN, -1)
+            curses.init_pair(1, curses.COLOR_WHITE, -1)
             curses.init_pair(2, curses.COLOR_YELLOW, -1)
             curses.init_pair(3, curses.COLOR_GREEN, -1)
             curses.init_pair(4, curses.COLOR_RED, -1)
+            curses.init_pair(5, curses.COLOR_WHITE, -1)
             self.colors_enabled = True
         except curses.error:
             self.colors_enabled = False
-        self.add_output("[picoclaw] TUI ready. Type normally below. When approval is needed, use arrows and Enter.")
 
     def color(self, pair: int) -> int:
         if self.colors_enabled:
             return curses.color_pair(pair)
         return curses.A_NORMAL
 
-    def add_output(self, text: str) -> None:
-        for raw_line in text.split("\n"):
-            line = raw_line.rstrip()
-            if should_hide_line(line):
-                continue
-            self.output_lines.append(line)
+    def add_message(self, role: str, author: str, lines: list[str]) -> ChatMessage:
+        cleaned = [line.rstrip() for line in lines]
+        message = ChatMessage(role=role, author=author, lines=cleaned)
+        self.messages.append(message)
+        return message
+
+    def append_message_line(self, role: str, author: str, line: str) -> None:
+        target: ChatMessage | None = None
+        if role == "assistant":
+            target = self.current_agent_message
+        elif role == "system":
+            target = self.current_banner_message
+
+        if target is None or target not in self.messages:
+            target = self.add_message(role, author, [])
+            if role == "assistant":
+                self.current_agent_message = target
+            elif role == "system":
+                self.current_banner_message = target
+
+        if line or target.lines:
+            target.lines.append(line.rstrip())
         self.dirty = True
+
+    def finish_agent_message(self) -> None:
+        self.current_agent_message = None
+
+    def finish_banner_message(self) -> None:
+        self.current_banner_message = None
 
     def poll_child(self) -> None:
         try:
@@ -248,7 +305,15 @@ class PicoClawTUI:
             clean = line.rstrip()
             if should_hide_line(clean):
                 continue
-            self.output_lines.append(clean)
+            if self.pending_user_echoes and clean.strip() == self.pending_user_echoes[0]:
+                self.pending_user_echoes.popleft()
+                continue
+            if is_banner_line(clean) or self.current_banner_message is not None:
+                self.append_message_line("system", "picoclaw", clean)
+                if "Interactive mode" in clean:
+                    self.finish_banner_message()
+                continue
+            self.append_message_line("assistant", self.model_label, clean)
         self.dirty = True
 
     def poll_pending(self) -> None:
@@ -278,6 +343,10 @@ class PicoClawTUI:
             self.pending_popup_open = False
 
     def send_line(self, line: str) -> None:
+        self.finish_agent_message()
+        self.scroll_offset = 0
+        self.add_message("user", "user", [line])
+        self.pending_user_echoes.append(line.strip())
         os.write(self.child_fd, line.encode("utf-8") + b"\n")
         self.dirty = True
 
@@ -287,9 +356,9 @@ class PicoClawTUI:
         request = self.pending_requests[self.pending_popup.selected_request]
         try:
             result = self.client.decide(request["id"], action)
-            self.add_output(f"[approval] {action}d {result['id']}")
+            self.add_message("system", "approval", [f"{action.title()}d {result['id']}"])
         except Exception as exc:  # noqa: BLE001
-            self.add_output(f"[approval] failed to {action} {request['id']}: {exc}")
+            self.add_message("system", "approval", [f"Failed to {action} {request['id']}: {exc}"])
         self.pending_popup_open = False
         self.last_poll = 0.0
         self.poll_pending()
@@ -300,60 +369,52 @@ class PicoClawTUI:
             return [line[:width]]
         return textwrap.wrap(line or " ", width=width, replace_whitespace=False, drop_whitespace=False) or [""]
 
-    def build_message_blocks(self, width: int) -> list[list[str]]:
-        lines = list(self.output_lines)
-        if self.partial_line:
-            lines.append(self.partial_line)
+    def trim_message_lines(self, lines: list[str]) -> list[str]:
+        trimmed = list(lines)
+        while trimmed and not trimmed[0].strip():
+            trimmed.pop(0)
+        while trimmed and not trimmed[-1].strip():
+            trimmed.pop()
+        return trimmed or [""]
 
-        messages: list[list[str]] = []
-        banner_block: list[str] = []
-        for line in lines:
-            if not line.strip():
-                if banner_block:
-                    messages.append(banner_block)
-                    banner_block = []
+    def build_message_blocks(self, width: int) -> list[list[tuple[str, int]]]:
+        content_width = max(18, width - 8)
+        rendered: list[list[tuple[str, int]]] = []
+        partial_target = self.current_banner_message or self.current_agent_message
+        for message in self.messages:
+            lines = list(message.lines)
+            if self.partial_line and message is partial_target:
+                lines = lines + [self.partial_line]
+            lines = self.trim_message_lines(lines)
+            if not any(line.strip() for line in lines):
                 continue
-            if is_banner_line(line):
-                banner_block.append(line)
-                if "Interactive mode" in line:
-                    messages.append(banner_block)
-                    banner_block = []
-                continue
-            if banner_block:
-                messages.append(banner_block)
-                banner_block = []
-            messages.append([line])
-        if banner_block:
-            messages.append(banner_block)
-
-        content_width = max(10, width - 8)
-        rendered: list[list[str]] = []
-        for message in messages:
-            block: list[str] = []
+            block: list[tuple[str, int]] = []
             border = "─" * content_width
-            block.append(f"╭{border}╮")
-            for raw in message:
-                for wrapped in self.wrap_line(raw, content_width - 2):
-                    block.append(f"│ {wrapped.ljust(content_width - 2)} │")
-            block.append(f"╰{border}╯")
+            block.append((f"╭{border}╮", self.color(1)))
+            for raw in lines:
+                wrapped_lines = self.wrap_line(raw, content_width - 2) if raw else [""]
+                for wrapped in wrapped_lines:
+                    block.append((f"│ {wrapped.ljust(content_width - 2)} │", curses.A_NORMAL))
+            block.append((f"╰{border}╯", self.color(1)))
+            label = f"  {message.author}"
+            block.append((label[: width - 2], self.color(5) | curses.A_DIM))
             rendered.append(block)
         return rendered
 
     def draw_output(self, top: int, height: int, width: int) -> None:
-        rendered_lines: list[str] = []
+        rendered_lines: list[tuple[str, int]] = []
         for idx, block in enumerate(self.build_message_blocks(width)):
             if idx > 0:
-                rendered_lines.append("")
+                rendered_lines.append(("", curses.A_NORMAL))
             rendered_lines.extend(block)
-
-        visible = rendered_lines[-height - self.scroll_offset :]
-        if self.scroll_offset:
-            visible = visible[:height]
-        else:
-            visible = visible[-height:]
+        total_lines = len(rendered_lines)
+        max_offset = max(total_lines - height, 0)
+        self.scroll_offset = min(self.scroll_offset, max_offset)
+        start = max(total_lines - height - self.scroll_offset, 0)
+        end = min(start + height, total_lines)
+        visible = rendered_lines[start:end]
         start_row = top
-        for idx, line in enumerate(visible[-height:]):
-            attr = self.color(1) if line.startswith(("╭", "╰", "│")) else curses.A_NORMAL
+        for idx, (line, attr) in enumerate(visible[-height:]):
             self.stdscr.addnstr(start_row + idx, 1, line, width - 2, attr)
 
     def draw_popup(self, height: int, width: int) -> None:
@@ -422,9 +483,9 @@ class PicoClawTUI:
         input_row = height - 2
         footer_row = height - 1
         self.stdscr.hline(input_row - 1, 0, curses.ACS_HLINE, width)
-        prompt = "You > "
+        prompt = "user > "
         self.stdscr.addnstr(input_row, 0, prompt + self.input_buffer, width - 1)
-        footer = "Enter: send | Ctrl+C: exit | When popup opens: arrows + Enter"
+        footer = "Enter: send | Up/Down: scroll | Ctrl+C: exit | Approval popup: arrows + Enter"
         self.stdscr.addnstr(footer_row, 0, footer, width - 1, self.color(2))
 
         cursor_x = min(len(prompt) + len(self.input_buffer), width - 1)
@@ -477,12 +538,20 @@ class PicoClawTUI:
             self.input_buffer = self.input_buffer[:-1]
             self.dirty = True
             return
+        if key == curses.KEY_UP:
+            self.scroll_offset += 3
+            self.dirty = True
+            return
+        if key == curses.KEY_DOWN:
+            self.scroll_offset = max(self.scroll_offset - 3, 0)
+            self.dirty = True
+            return
         if key == curses.KEY_PPAGE:
-            self.scroll_offset = min(self.scroll_offset + 5, max(len(self.output_lines) - 1, 0))
+            self.scroll_offset += 12
             self.dirty = True
             return
         if key == curses.KEY_NPAGE:
-            self.scroll_offset = max(self.scroll_offset - 5, 0)
+            self.scroll_offset = max(self.scroll_offset - 12, 0)
             self.dirty = True
             return
         if key == curses.KEY_RESIZE:
