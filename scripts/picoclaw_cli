@@ -1,0 +1,17 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT="/Users/Tim/Documents/picoclaw"
+CONTAINER_NAME="picoclaw"
+. "$ROOT/scripts/picoclaw_docker_env"
+picoclaw_setup_docker require
+
+if ! docker ps --filter "name=^/${CONTAINER_NAME}$" --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
+  echo "Container ${CONTAINER_NAME} is not running. Start it first with picoclaw_on." >&2
+  exit 1
+fi
+
+TERM_VALUE="${TERM:-xterm-256color}"
+cd "$ROOT"
+export TERM="$TERM_VALUE"
+exec python3 "$ROOT/scripts/picoclaw_cli.py"

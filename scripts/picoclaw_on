@@ -1,0 +1,12 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT="/Users/Tim/Documents/picoclaw"
+. "$ROOT/scripts/picoclaw_docker_env"
+picoclaw_setup_docker require
+
+model="$(python3 "$ROOT/scripts/picoclaw_lmstudio.py")"
+echo "Using LM Studio model: $model"
+
+"$ROOT/scripts/picoclaw_bridge_start"
+"$ROOT/scripts/picoclaw_compose_up"

@@ -1,0 +1,44 @@
+services:
+  # ─────────────────────────────────────────────
+  # PicoClaw Agent (one-shot query) - Full MCP Support
+  #   docker compose -f docker/docker-compose.full.yml run --rm picoclaw-agent -m "Hello"
+  # ─────────────────────────────────────────────
+  picoclaw-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.full
+    container_name: picoclaw-agent-full
+    profiles:
+      - agent
+    volumes:
+      - ../config/config.json:/home/picoclaw/.picoclaw/config.json:ro
+      - picoclaw-workspace:/home/picoclaw/.picoclaw/workspace
+      - picoclaw-npm-cache:/home/picoclaw/.npm # npm cache for faster MCP server installs
+    entrypoint: ["picoclaw", "agent"]
+    stdin_open: true
+    tty: true
+
+  # ─────────────────────────────────────────────
+  # PicoClaw Gateway (Long-running Bot) - Full MCP Support
+  #   docker compose -f docker/docker-compose.full.yml --profile gateway up
+  # ─────────────────────────────────────────────
+  picoclaw-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.full
+    container_name: picoclaw-gateway-full
+    restart: unless-stopped
+    profiles:
+      - gateway
+    volumes:
+      # Configuration file
+      - ../config/config.json:/home/picoclaw/.picoclaw/config.json:ro
+      # Persistent workspace (sessions, memory, logs)
+      - picoclaw-workspace:/home/picoclaw/.picoclaw/workspace
+      # NPM cache for faster MCP server installs
+      - picoclaw-npm-cache:/home/picoclaw/.npm
+    command: ["gateway"]
+
+volumes:
+  picoclaw-workspace:
+  picoclaw-npm-cache: # Cache npm packages to speed up MCP server installations

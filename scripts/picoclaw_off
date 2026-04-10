@@ -1,0 +1,11 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT="/Users/Tim/Documents/picoclaw"
+. "$ROOT/scripts/picoclaw_docker_env"
+picoclaw_setup_docker best_effort
+
+cd "$ROOT"
+docker compose down --remove-orphans || true
+"$ROOT/scripts/picoclaw_bridge_stop"
+"$ROOT/scripts/picoclaw_reset_context"

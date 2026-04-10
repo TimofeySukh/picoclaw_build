@@ -1,0 +1,29 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT="/Users/Tim/Documents/picoclaw"
+. "$ROOT/scripts/picoclaw_docker_env"
+picoclaw_setup_docker require
+RESET_CONTEXT=1
+
+if [[ "${1:-}" == "--no_reset" ]]; then
+  RESET_CONTEXT=0
+  shift
+fi
+
+if [[ $# -gt 0 ]]; then
+  echo "Usage: picoclaw_restart [--no_reset]" >&2
+  exit 1
+fi
+
+model="$(python3 "$ROOT/scripts/picoclaw_lmstudio.py")"
+echo "Restarting with LM Studio model: $model"
+
+cd "$ROOT"
+docker compose down --remove-orphans
+"$ROOT/scripts/picoclaw_bridge_stop"
+if [[ "$RESET_CONTEXT" -eq 1 ]]; then
+  "$ROOT/scripts/picoclaw_reset_context"
+fi
+"$ROOT/scripts/picoclaw_bridge_start"
+"$ROOT/scripts/picoclaw_compose_up"

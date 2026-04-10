@@ -1,0 +1,17 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT="/Users/Tim/Documents/picoclaw"
+DATA_DIR="$ROOT/docker/data"
+WORKSPACE_DIR="$DATA_DIR/workspace"
+
+mkdir -p "$WORKSPACE_DIR"
+
+rm -rf \
+  "$WORKSPACE_DIR/sessions" \
+  "$WORKSPACE_DIR/memory" \
+  "$WORKSPACE_DIR/.artifacts"
+
+find "$WORKSPACE_DIR" -maxdepth 1 -type f \
+  \( -name 'AGENT.md' -o -name 'SOUL.md' -o -name 'USER.md' -o -name 'HEARTBEAT.md' \) \
+  -delete 2>/dev/null || true

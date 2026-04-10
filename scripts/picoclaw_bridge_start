@@ -1,0 +1,24 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT="/Users/Tim/Documents/picoclaw"
+STATE_DIR="$ROOT/docker/data/hostexec"
+PID_FILE="$STATE_DIR/bridge.pid"
+LOG_FILE="$STATE_DIR/bridge.log"
+SCREEN_NAME="picoclaw_host_bridge"
+
+mkdir -p "$STATE_DIR"
+
+if [[ -f "$PID_FILE" ]]; then
+  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  if [[ -n "${pid}" ]] && kill -0 "$pid" 2>/dev/null; then
+    exit 0
+  fi
+  rm -f "$PID_FILE"
+fi
+
+if screen -list 2>/dev/null | grep -q "[.]${SCREEN_NAME}[[:space:]]"; then
+  exit 0
+fi
+
+screen -dmS "$SCREEN_NAME" zsh -lc "exec python3 \"$ROOT/scripts/picoclaw_host_bridge.py\" >>\"$LOG_FILE\" 2>&1"

@@ -1,0 +1,35 @@
+#!/bin/zsh
+
+picoclaw_setup_docker() {
+  local mode="${1:-best_effort}"
+  local colima_socket="$HOME/.colima/default/docker.sock"
+
+  if [[ -n "${DOCKER_HOST:-}" ]]; then
+    return 0
+  fi
+
+  if command -v colima >/dev/null 2>&1; then
+    local colima_status
+    colima_status="$(colima list 2>/dev/null | awk '$1 == "default" {print $2}')"
+
+    if [[ -n "$colima_status" ]]; then
+      if [[ "$mode" == "require" && "$colima_status" != "Running" ]]; then
+        echo "Starting Colima..."
+        colima start
+      fi
+
+      if [[ -S "$colima_socket" ]]; then
+        unset DOCKER_CONTEXT
+        export DOCKER_HOST="unix://$colima_socket"
+        return 0
+      fi
+
+      export DOCKER_CONTEXT=colima
+
+      return 0
+    fi
+  fi
+
+  unset DOCKER_HOST
+  export DOCKER_CONTEXT=default
+}

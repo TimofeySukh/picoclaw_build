@@ -1,0 +1,39 @@
+FROM golang:1.26.0-alpine AS go-builder
+
+FROM node:24-alpine3.23 AS builder
+
+COPY --from=go-builder /usr/local/go /usr/local/go
+
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+RUN apk add --no-cache git make
+
+WORKDIR /src
+
+RUN corepack enable
+
+COPY web/frontend/package.json /src/web/frontend/package.json
+COPY web/frontend/pnpm-lock.yaml /src/web/frontend/pnpm-lock.yaml
+
+RUN cd web/frontend && pnpm install --frozen-lockfile
+
+COPY . .
+RUN make build build-launcher build-launcher-tui
+
+FROM alpine:3.23
+
+RUN apk add --no-cache ca-certificates tzdata curl && \
+    addgroup -g 1000 picoclaw && \
+    adduser -D -u 1000 -G picoclaw -h /home/picoclaw picoclaw && \
+    mkdir -p /home/picoclaw/.picoclaw && \
+    chown -R picoclaw:picoclaw /home/picoclaw
+
+COPY --from=builder /src/build/picoclaw /usr/local/bin/picoclaw
+COPY --from=builder /src/build/picoclaw-launcher /usr/local/bin/picoclaw-launcher
+COPY --from=builder /src/build/picoclaw-launcher-tui /usr/local/bin/picoclaw-launcher-tui
+
+ENV HOME=/home/picoclaw
+USER picoclaw
+
+ENTRYPOINT ["picoclaw-launcher"]
+CMD ["-console", "-public", "-no-browser"]

@@ -1,0 +1,59 @@
+# Build artifacts
+bin/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/picoclaw
+/picoclaw-test
+cmd/**/workspace
+
+# Local secrets and machine-specific config
+.env
+config/config.json
+.security.yml
+onboard
+
+# Coverage
+coverage.txt
+coverage.html
+
+# OS junk
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Release output
+dist/
+*.vite/
+
+# Windows resources
+*.syso
+
+# Keep embedded backend dist placeholder in VCS
+!web/backend/dist/
+web/backend/dist/*
+!web/backend/dist/.gitkeep
+
+# Local app folders
+.claude/
+.omc/
+.picoclaw/
+ralph/
+.ralph/
+tasks/
+docs/plans/
+docs/superpowers/
+cmd/telegram/
+
+# Docker runtime data
+docker/data/.security.yml
+docker/data/config.json.*.bak
+docker/data/logs/
+docker/data/hostexec/
+docker/data/workspace/

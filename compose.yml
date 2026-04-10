@@ -1,0 +1,16 @@
+services:
+  picoclaw:
+    image: picoclaw-local:latest
+    container_name: picoclaw
+    restart: unless-stopped
+    init: true
+    environment:
+      PICOCLAW_GATEWAY_HOST: 0.0.0.0
+      TZ: ${TZ:-UTC}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "18800:18800"
+      - "18790:18790"
+    volumes:
+      - ./docker/data:/home/picoclaw/.picoclaw

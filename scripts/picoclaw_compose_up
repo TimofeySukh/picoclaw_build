@@ -1,0 +1,31 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT="/Users/Tim/Documents/picoclaw"
+. "$ROOT/scripts/picoclaw_docker_env"
+picoclaw_setup_docker require
+ATTEMPTS=3
+SLEEP_SECONDS=3
+
+cd "$ROOT"
+
+if ! docker image inspect picoclaw-local:latest >/dev/null 2>&1; then
+  echo "Building local picoclaw image..."
+  docker build -f docker/Dockerfile.launcher.local -t picoclaw-local:latest .
+fi
+
+attempt=1
+while (( attempt <= ATTEMPTS )); do
+  if docker compose up -d; then
+    exit 0
+  fi
+
+  if (( attempt == ATTEMPTS )); then
+    echo "Docker start failed after ${ATTEMPTS} attempts." >&2
+    exit 1
+  fi
+
+  echo "Docker start failed, retrying in ${SLEEP_SECONDS}s (${attempt}/${ATTEMPTS})..." >&2
+  sleep "$SLEEP_SECONDS"
+  ((attempt++))
+done
